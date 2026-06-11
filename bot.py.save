@@ -1,0 +1,76 @@
+import asyncio
+import aiohttp
+import random
+
+# === ТОКЕН БОТА ===
+TOKEN = "8662927935:AAGVLDcdCJPNM_ujdYeMeVRWd7pHdS6fP-k"
+# === ШАНС 50% ===
+CHANCE = 0.50
+
+async def send_message(session, chat_id, text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    data = {"chat_id": chat_id, "text": text}
+    async with session.post(url, json=data) as response:
+        return await response.json()
+
+async def get_updates(session, offset=None):
+    url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+    params = {"timeout": 60}
+    if offset:
+        params["offset"] = offset
+    async with session.get(url, params=params) as response:
+        return await response.json()
+
+async def get_me(session):
+    url = f"https://api.telegram.org/bot{TOKEN}/getMe"
+    async with session.get(url) as response:
+        return await response.json()
+
+async def handle_message(session, message):
+    chat_id = message["chat"]["id"]
+    text = message.get("text", "")
+    user = message.get("from", {})
+    first_name = user.get("first_name", "User")
+    
+    me = await get_me(session)
+    bot_id = me["result"]["id"]
+    
+    # Не реагируем на сообщения бота
+    if user.get("id") == bot_id:
+        return
+    
+    # Не реагируем на команды
+    if text.startswith("/"):
+        return
+    
+    # Проверяем шанс 50%
+    if random.random() < CHANCE:
+        await send_message(session, chat_id, "ты лох")
+        print(f"Бот написал 'ты лох' пользователю: {first_name}")
+
+async def main():
+    print("🤖 Бот запущен!")
+    
+    async with aiohttp.ClientSession() as session:
+        me = await get_me(session)
+        print(f"Бот: {me['result']['first_name']}")
+        
+        offset = None
+        
+        while True:
+            try:
+                updates = await get_updates(session, offset)
+                
+                if updates.get("ok") and updates.get("result"):
+                    for update in updates["result"]:
+                        offset = update["update_id"] + 1
+                        
+                        if "message" in update:
+                            await handle_message(session, update["message"])
+                
+            except Exception as e:
+                print(f"Ошибка: {e}")
+                await asyncio.sleep(1)
+
+asyncio.run(main())
+

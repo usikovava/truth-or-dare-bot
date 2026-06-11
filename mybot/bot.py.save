@@ -1,0 +1,178 @@
+Вы абсолютно правы, прошу прощения за недочет. В предыдущем ответе я не вставил сам код.
+
+Вот полный и готовый к использованию код бота. Вам нужно просто скопировать его в файл bot.py вместо того кода, что был там ранее.
+
+Код для файла bot.py
+
+Скопируйте весь этот блок текста:
+
+import logging
+import random
+from telegram import Update, ForceReply
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+
+# --- НАСТРОЙКИ ---
+TOKEN = 'ВАШ_API_TOKEN' # Замените на токен вашего бота от @BotFather
+CHANCE = 0.01 # Шанс выдачи очка (1%)
+# ------------------
+
+# Словарь для хранения очков пользователей: {user_id: points}
+points_db = {}
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /start"""
+    user = update.effective_user
+    await update.message.reply_html(
+        rf"Привет, {user.mention_html()}! Используй /help, чтобы узнать список команд.",
+        reply_markup=ForceReply(selective=True),
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /help"""
+    await update.message.reply_text(
+        "Я начисляю очки за сообщения!\n\n"
+        "/mystat — посмотреть свои очки\n"
+        "/points @username — посмотреть очки другого пользователя\n"
+        "\nАдмины могут использовать:\n"
+        "/delpoints <кол-во> @username — удалить очки у пользователя\n"
+        "/reset @username — сбросить все очки пользователя до нуля"
+    )
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Основной обработчик сообщений в чате.
+    С шансом CHANCE% выдает пользователю 1 очко и отвечает на его сообщение.
+    """
+    if not update.message or update.message.text is None:
+        return
+
+    user_id = update.message.from_user.id
+
+    # Выдаем очко с заданным шансом
+    if random.random() <= CHANCE:
+        points_db[user_id] = points_db.get(user_id, 0) + 1
+        # Реплай на сообщение пользователя
+        await update.message.reply_text(f"{update.message.from_user.mention_markdown_v2()}, вам выдано 1 очко за сообщение")
+
+async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /mystat"""
+    user_id = update.effective_user.id
+    username = update.effective_user.username
+    points = points_db.get(user_id, 0)
+    await update.message.reply_text(f"@{username}, у вас {points} очков.")
+
+async def points(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /points @username"""
+    if len(context.args) != 1:
+        await update.message.reply_text("Использование: /points @username")
+        return
+
+    target_username = context.args[0].lstrip('@')
+    
+    try:
+        # Получаем информацию о пользователе по юзернейму
+        chat_member = await context.bot.get_chat_member(chat_id=update.effective_chat.id, username=target_username)
+        target_user_id = chat_member.user.id
+        points_count = points_db.get(target_user_id, 0)
+        await update.message.reply_text(f"@{target_username} сейчас имеет {points_count} очков.")
+    except Exception as e:
+        await update.message.reply_text(f"Пользователь @{target_username} не найден или недоступен.")
+
+def admin_required(func):
+    """
+    Декоратор для проверки, является ли пользователь админом чата.
+    Оборачивает функции команд, доступных только администраторам.
+    """
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_chat and update.effective_user:
+            try:
+                member = await context.bot.get_chat_member(
+                    chat_id=update.effective_chat.id,
+                    user_id=update.effective_user.id
+                )
+                if member.status in ['creator', 'administrator']:
+                    return await func(update, context)
+                else:
+                    await update.message.reply_text("У вас нет прав администратора для выполнения этой команды.")
+            except Exception:
+                pass
+    return wrapper
+
+@admin_required
+async def delpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /delpoints <кол-во> @username"""
+    if len(context.args) != 2:
+        await update.message.reply_text("Использование: /delpoints <количество> @username")
+        return
+
+    try:
+        amount = int(context.args[0])
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("<количество> должно быть положительным целым числом.")
+        return
+
+    target_username = context.args[1].lstrip('@')
+
+    try:
+        chat_member = await context.bot.get_chat_member(chat_id=update.effective_chat.id, username=target_username)
+        target_user_id = chat_member.user.id
+
+        current_points = points_db.get(target_user_id, 0)
+        new_points = max(0, current_points - amount)
+        points_db[target_user_id] = new_points
+
+        await update.message.reply_text(f"У @{target_username} удалено {amount} очков.")
+    except Exception as e:
+        await update.message.reply_text(f"Произошла ошибка при обработке запроса для @{target_username}.")
+
+@admin_required
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /reset @username"""
+    if len(context.args) != 1:
+        await update.message.reply_text("Использование: /reset @username")
+        return
+
+    target_username = context.args[0].lstrip('@')
+
+    try:
+        chat_member = await context.bot.get_chat_member(chat_id=update.effective_chat.id, username=target_username)
+        target_user_id = chat_member.user.id
+
+        if target_user_id in points_db:
+            del points_db[target_user_id]
+            await update.message.reply_text(f"Очки пользователя @{target_username} сброшены до нуля.")
+        else:
+            await update.message.reply_text(f"У пользователя @{target_username} и так ноль очков.")
+    except Exception as e:
+        await update.message.reply_text(f"Пользователь @{target_username} не найден или недоступен.")
+
+def main():
+    """Функция запуска бота"""
+    application = Appli
+    # Регистрация обработчиков команд
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("mystat", mystat))
+    application.add_handler(CommandHandler("points", points))
+    application.add_handler(CommandHandler("delpoints", delpoints))
+    application.add_handler(CommandHandler("reset", reset))
+
+    # Регистрация обработчика обычных текстовых сообщений
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+    # Запуск поллинга (постоянного опроса серверов Telegram)
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
+
+Теперь замените старый код в вашем файле bot.py на этот новый и следуйте инструкциям из предыдущего ответ
